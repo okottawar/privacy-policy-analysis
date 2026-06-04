@@ -190,7 +190,7 @@
     </div>
   </section>
 
-  <!-- ── Input ── -->
+  <!--  Input  -->
   <section class="input-section">
     <div class="card">
       <div class="card-header">
@@ -231,7 +231,7 @@
     </div>
   </section>
 
-  <!-- ── Pipeline status ── -->
+  <!--  Pipeline status  -->
   <section id="pipeline-status">
     <div class="pipeline-track">
       <div class="pipe-step" id="step-send">    <div class="step-dot"></div> Sending to analysis backend…       </div>
@@ -246,7 +246,7 @@
 
   <div id="error-area" style="display:none; padding: 16px 0;"></div>
 
-  <!-- ── Results ── -->
+  <!--  Results  -->
   <section id="results">
     <div class="results-header">
       <div class="results-url" id="results-url"></div>
@@ -293,21 +293,16 @@
 </footer>
 
 <script>
-// ════════════════════════════════════════════════════════════════════
-// CONFIG — replace with your Render backend URL after deploying
-// ════════════════════════════════════════════════════════════════════
-const BACKEND_URL = 'https://YOUR-APP-NAME.onrender.com';
 
-// ════════════════════════════════════════════════════════════════════
+// CONFIG 
+const BACKEND_URL = 'https://privacy-policy-analysis.onrender.com';
+
 // STATE — chunks returned from backend for the explorer
-// ════════════════════════════════════════════════════════════════════
 let gChunks   = [];   // flat list of {section, content} for TF-IDF
 let gFindings = [];
 let gTfidf    = null;
 
-// ════════════════════════════════════════════════════════════════════
 // UI HELPERS
-// ════════════════════════════════════════════════════════════════════
 function switchTab(tab) {
   document.getElementById('url-area').style.display   = tab === 'url'   ? '' : 'none';
   document.getElementById('paste-area').style.display = tab === 'paste' ? '' : 'none';
@@ -337,10 +332,8 @@ function scoreBg(n) {
   return n <= 3 ? 'bg-green' : n <= 6 ? 'bg-amber' : 'bg-red';
 }
 
-// ════════════════════════════════════════════════════════════════════
+
 // PIPELINE STEP SIMULATION
-// Keeps the status panel feeling live while the backend works
-// ════════════════════════════════════════════════════════════════════
 const STEPS = ['step-send','step-fetch','step-chunk','step-embed','step-retrieve','step-llm','step-report'];
 const STEP_DELAYS = [0, 2000, 5000, 9000, 13000, 17000, 50000]; // approx timing
 
@@ -371,9 +364,7 @@ function failStepSimulation() {
   if (active) setStep(active, 'error');
 }
 
-// ════════════════════════════════════════════════════════════════════
-// MAIN ORCHESTRATOR — just POST to backend
-// ════════════════════════════════════════════════════════════════════
+// MAIN ORCHESTRATOR 
 async function runAnalysis() {
   const url    = document.getElementById('policy-url').value.trim();
   const pasted = document.getElementById('policy-text').value.trim();
@@ -428,9 +419,7 @@ async function runAnalysis() {
   }
 }
 
-// ════════════════════════════════════════════════════════════════════
 // RENDER RESULTS
-// ════════════════════════════════════════════════════════════════════
 function renderResults(data) {
   document.getElementById('results-url').textContent = data.url;
 
@@ -497,10 +486,8 @@ function buildRiskCard(f) {
   return card;
 }
 
-// ════════════════════════════════════════════════════════════════════
 // CLIENT-SIDE TF-IDF CHUNK EXPLORER
 // Runs over evidence chunks returned by the backend
-// ════════════════════════════════════════════════════════════════════
 const STOPWORDS = new Set([
   'the','and','for','are','but','not','you','all','can','was','one',
   'our','out','get','has','how','its','may','new','now','see','who',
