@@ -3,7 +3,7 @@
 > Portfolio project demonstrating production RAG concepts: LangChain + FAISS + Gemini 1.5 Flash.
 > Users just enter a URL — no API key required on their end.
 
-**Frontend (GitHub Pages):** `https://YOUR-USERNAME.github.io/privacy-policy-analyzer`
+**Frontend (GitHub Pages):** `https://okottawar.github.io/privacy-policy-analyzer`
 **Backend (Render):** `https://YOUR-APP-NAME.onrender.com`
 
 ---
