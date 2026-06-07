@@ -1,12 +1,12 @@
 """
 /api/v1/analyze — Main analysis endpoint.
-Orchestrates: fetch → chunk → embed → retrieve → reason → score → report
+Orchestrates: fetch → chunk → index → retrieve → reason → score → report
 """
 
 from fastapi import APIRouter, HTTPException
 from app.models.schemas import AnalyzeRequest, AnalyzeResponse
 from app.services.retrieval import fetch_policy, extract_sections
-from app.services.chunking import chunk_sections, build_vector_store, retrieve_relevant_chunks
+from app.services.chunking import chunk_sections, build_index, retrieve_relevant_chunks
 from app.services.llm_service import (
     analyze_risk_category,
     compute_overall_score,
@@ -23,7 +23,7 @@ async def analyze_policy(request: AnalyzeRequest):
     Full RAG pipeline:
     1. Fetch & clean the privacy policy
     2. Extract sections and chunk the document
-    3. Build FAISS vector store
+    3. Build TF-IDF index (replaces FAISS — fits in 512MB free tier)
     4. For each risk category: retrieve relevant chunks + run LLM reasoning
     5. Aggregate scores and generate executive summary
     """
@@ -44,16 +44,16 @@ async def analyze_policy(request: AnalyzeRequest):
     if not chunks:
         raise HTTPException(status_code=422, detail="Could not extract text chunks.")
 
-    # ── Step 3: Build FAISS vector store ─────────────────────────────────────
+    # ── Step 3: Build TF-IDF index ────────────────────────────────────────────
     try:
-        vector_store = build_vector_store(chunks)
+        index = build_index(chunks)
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Embedding failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Indexing failed: {e}")
 
     # ── Step 4: Retrieve + reason per category ────────────────────────────────
     findings = []
     for category, query in RISK_QUERIES.items():
-        relevant = retrieve_relevant_chunks(vector_store, query, k=5)
+        relevant = retrieve_relevant_chunks(index, query, k=5)
         finding = analyze_risk_category(
             category_name=category.replace("_", " ").title(),
             retrieved_chunks=relevant,

@@ -1,31 +1,15 @@
 """
-Chunking & Embedding Pipeline
-Hierarchical chunking based on section boundaries + semantic overlap.
-Embeddings via sentence-transformers, stored in FAISS.
+Chunking & Retrieval Pipeline
+Hierarchical chunking + TF-IDF cosine similarity retrieval via scikit-learn.
+Replaces FAISS + sentence-transformers to stay within Render free tier memory (512MB).
+TF-IDF is well-suited to privacy policy text: keyword-dense legal language.
 """
 
 import uuid
-import numpy as np
-from typing import List
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
-
-
-# Singleton embedding model (loaded once)
-_embedding_model: HuggingFaceEmbeddings | None = None
-
-
-def get_embeddings() -> HuggingFaceEmbeddings:
-    """Lazy-load the embedding model."""
-    global _embedding_model
-    if _embedding_model is None:
-        _embedding_model = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2",
-            model_kwargs={"device": "cpu"},
-            encode_kwargs={"normalize_embeddings": True},
-        )
-    return _embedding_model
+from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics.pairwise import cosine_similarity
+import numpy as np
 
 
 def chunk_sections(sections: list[dict], chunk_size: int = 800, overlap: int = 150) -> list[dict]:
@@ -56,52 +40,54 @@ def chunk_sections(sections: list[dict], chunk_size: int = 800, overlap: int = 1
     return chunks
 
 
-def build_vector_store(chunks: list[dict]) -> FAISS:
+class TFIDFIndex:
     """
-    Embed all chunks and build a FAISS vector store.
-    Metadata (section, chunk_id) is stored alongside vectors.
+    Lightweight in-memory TF-IDF index.
+    Replaces FAISS — no model weights, no GPU, <5MB RAM.
     """
-    embeddings = get_embeddings()
 
-    texts = [c["content"] for c in chunks]
-    metadatas = [
-        {
-            "section": c["section"],
-            "chunk_id": c["chunk_id"],
-            "chunk_index": c["chunk_index"],
-        }
-        for c in chunks
-    ]
+    def __init__(self, chunks: list[dict]):
+        self.chunks = chunks
+        texts = [c["content"] for c in chunks]
 
-    vector_store = FAISS.from_texts(texts, embeddings, metadatas=metadatas)
-    return vector_store
+        self.vectorizer = TfidfVectorizer(
+            stop_words="english",
+            ngram_range=(1, 2),      # unigrams + bigrams for better legal text matching
+            max_features=20000,
+            sublinear_tf=True,       # log normalization reduces impact of high-freq terms
+        )
+        self.matrix = self.vectorizer.fit_transform(texts)
+
+    def search(self, query: str, k: int = 5, threshold: float = 0.05) -> list[dict]:
+        """Return top-k chunks most similar to query, above threshold."""
+        q_vec = self.vectorizer.transform([query])
+        scores = cosine_similarity(q_vec, self.matrix).flatten()
+
+        top_indices = np.argsort(scores)[::-1][:k]
+
+        results = []
+        for idx in top_indices:
+            score = float(scores[idx])
+            if score >= threshold:
+                results.append({
+                    "content": self.chunks[idx]["content"],
+                    "section": self.chunks[idx]["section"],
+                    "chunk_id": self.chunks[idx]["chunk_id"],
+                    "similarity_score": round(score, 4),
+                })
+
+        return results
+
+
+def build_index(chunks: list[dict]) -> TFIDFIndex:
+    """Build a TF-IDF index from chunks."""
+    return TFIDFIndex(chunks)
 
 
 def retrieve_relevant_chunks(
-    vector_store: FAISS,
+    index: TFIDFIndex,
     query: str,
     k: int = 5,
-    score_threshold: float = 0.25,
 ) -> list[dict]:
-    """
-    Retrieve top-k semantically relevant chunks for a query.
-    Applies a similarity score threshold to filter low-quality matches.
-    """
-    results_with_scores = vector_store.similarity_search_with_score(query, k=k)
-
-    retrieved = []
-    for doc, score in results_with_scores:
-        # FAISS returns L2 distance; lower = more similar
-        # Convert to a 0–1 similarity score
-        similarity = float(1 / (1 + score))
-        if similarity >= score_threshold:
-            retrieved.append({
-                "content": doc.page_content,
-                "section": doc.metadata.get("section", "Unknown"),
-                "chunk_id": doc.metadata.get("chunk_id", ""),
-                "similarity_score": round(similarity, 4),
-            })
-
-    # Sort by similarity descending
-    retrieved.sort(key=lambda x: x["similarity_score"], reverse=True)
-    return retrieved
+    """Retrieve top-k relevant chunks for a query."""
+    return index.search(query, k=k)

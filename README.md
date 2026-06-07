@@ -1,183 +1,136 @@
-# PrivacyLens — Privacy Policy Risk Analyzer
+# PrivacyLens
 
-> Portfolio project demonstrating production RAG concepts: LangChain + FAISS + Gemini 1.5 Flash.
-> Users just enter a URL — no API key required on their end.
+**A RAG-powered privacy policy risk analyzer.**
 
-**Frontend (GitHub Pages):** `https://okottawar.github.io/privacy-policy-analyzer`
-**Backend (Render):** `https://YOUR-APP-NAME.onrender.com`
+Paste any privacy policy URL and get a structured risk report — scored across six categories, grounded in evidence retrieved directly from the document. No summaries from memory. No hallucinated findings.
+
+🔗 **Live demo:** `https://okottawar.github.io/privacy-policy-analyzer`
+
+---
+
+## What it does
+
+Most people never read privacy policies. PrivacyLens makes them legible — it fetches a policy, breaks it into chunks, retrieves the most relevant clauses for each risk category, and asks an LLM to reason only over what it actually found.
+
+The output is a structured report covering:
+
+| Category | What it examines |
+|---|---|
+| Data Collection | What personal data is gathered and why |
+| Third-Party Sharing | Whether data is sold or shared with advertisers |
+| Data Retention | How long data is kept, and under what conditions |
+| User Rights | Access, deletion, and portability controls |
+| Tracking & Cookies | Behavioural tracking, fingerprinting, ad targeting |
+| Consent Mechanisms | How consent is obtained and whether opt-out exists |
+
+Each category gets a 0–10 risk score, a list of red flags, positive indicators, and the exact policy excerpts that produced the finding.
+
+---
+
+## How it works
+
+The system is built around a retrieval-augmented generation (RAG) pipeline. The LLM never reasons from memory — it only sees chunks retrieved from the actual document.
+
+```
+Policy URL
+   │
+   ▼
+Fetch & clean                   requests + trafilatura
+   │
+   ▼
+Section extraction              heading heuristics
+   │
+   ▼
+Hierarchical chunking           LangChain RecursiveCharacterTextSplitter
+   │                            800 tokens, 150 token overlap
+   ▼
+TF-IDF index                    scikit-learn, bigram features
+   │
+   ▼
+Per-category retrieval          cosine similarity, top-5 chunks per query
+   │
+   ▼
+LLM reasoning                   Gemini 1.5 Flash, JSON-only output
+   │
+   ▼
+Heuristic score adjustment      keyword signal layer over LLM score
+   │
+   ▼
+Structured risk report
+```
+
+The scoring is intentionally not left entirely to the LLM. A keyword heuristic layer adjusts the LLM-generated score up or down based on known high-risk phrases ("may share with third parties", "retain indefinitely") and low-risk signals ("right to erasure", "you may withdraw consent"). This makes the scoring more reproducible and less sensitive to LLM phrasing variation.
+
+### Why TF-IDF instead of dense embeddings
+
+The original design used FAISS with `sentence-transformers/all-MiniLM-L6-v2` for dense vector retrieval. During deployment, this exceeded Render's free tier memory ceiling (512MB) — PyTorch and the transformer weights alone consume ~450MB at idle.
+
+Privacy policy text is keyword-dense legal language. Sparse retrieval with TF-IDF bigrams performs comparably to dense embeddings for this domain, while using ~5MB of memory instead of ~450MB. The architectural pattern — chunk, index, retrieve, reason — is identical either way.
 
 ---
 
 ## Architecture
 
 ```
-[User: enters URL]
-        │
-        ▼
-[Frontend — GitHub Pages]
-  Pure HTML/JS
-  POST { url } → Backend
-        │
-        ▼
-[Backend — Render (FastAPI)]
-  GEMINI_API_KEY loaded from env
-        │
-  ┌─────┴──────────────────────┐
-  │  1. Fetch & clean policy   │  requests + trafilatura
-  │  2. Extract sections       │  heading heuristics
-  │  3. Chunk (800t, 150 ovlp) │  LangChain RecursiveTextSplitter
-  │  4. Embed + FAISS index    │  all-MiniLM-L6-v2
-  │  5. Retrieve (per category)│  FAISS similarity_search
-  │  6. LLM reasoning          │  Gemini 1.5 Flash
-  │  7. Heuristic score adjust │  keyword signals
-  │  8. Executive summary      │  Gemini 1.5 Flash
-  └─────┬──────────────────────┘
-        │
-        ▼
-  JSON response → Frontend renders report
+┌─────────────────────────────┐         ┌──────────────────────────────────┐
+│   Frontend                  │         │   Backend (FastAPI on Render)     │
+│   GitHub Pages              │         │                                   │
+│                             │  POST   │  app/                             │
+│   Pure HTML + JS            │ ──────► │  ├── routers/analyze.py          │
+│   No API key exposed        │         │  ├── services/                    │
+│   TF-IDF chunk explorer     │ ◄────── │  │   ├── retrieval.py            │
+│                             │  JSON   │  │   ├── chunking.py             │
+└─────────────────────────────┘         │  │   └── llm_service.py         │
+                                        │  └── models/schemas.py           │
+                                        │                                   │
+                                        │  GEMINI_API_KEY → env var only    │
+                                        └──────────────────────────────────┘
 ```
+
+The API key never touches the frontend. It lives only in Render's environment variables and is loaded at startup. CORS is locked to the GitHub Pages origin.
 
 ---
 
-## Project Structure
+## Project structure
 
 ```
 privacy-policy-analyzer/
+│
 ├── frontend/
-│   └── index.html              # GitHub Pages app — calls backend, no API key exposed
+│   └── index.html              # Entire frontend — single file, no build step
 │
-├── backend/
-│   ├── render.yaml             # Render deployment config
-│   ├── requirements.txt
-│   ├── .env.example            # Copy to .env for local dev
-│   └── app/
-│       ├── main.py             # FastAPI app + CORS config
-│       ├── routers/
-│       │   └── analyze.py      # POST /api/v1/analyze
-│       ├── services/
-│       │   ├── retrieval.py    # Fetch + parse + clean policy text
-│       │   ├── chunking.py     # LangChain chunking + FAISS pipeline
-│       │   └── llm_service.py  # Gemini reasoning + heuristic scoring
-│       └── models/
-│           └── schemas.py      # Pydantic request/response models
-│
-└── README.md
+└── backend/
+    ├── requirements.txt
+    ├── render.yaml
+    ├── .env.example
+    └── app/
+        ├── main.py             # FastAPI app, CORS middleware
+        ├── routers/
+        │   └── analyze.py      # POST /api/v1/analyze — pipeline orchestration
+        ├── services/
+        │   ├── retrieval.py    # URL fetching, HTML cleaning, section extraction
+        │   ├── chunking.py     # LangChain chunking + TF-IDF index + retrieval
+        │   └── llm_service.py  # Gemini prompting, heuristic scoring, executive summary
+        └── models/
+            └── schemas.py      # Pydantic request/response validation
 ```
 
 ---
 
-## Deployment Guide
+## API
 
-### Step 1 — Get a free Gemini API key
+`POST /api/v1/analyze`
 
-1. Go to [aistudio.google.com/app/apikey](https://aistudio.google.com/app/apikey)
-2. Click **Create API key** — no credit card needed
-3. Copy the key (starts with `AIzaSy…`)
-
----
-
-### Step 2 — Deploy the backend to Render
-
-1. Push this repo to GitHub (include the `backend/` folder)
-2. Go to [render.com](https://render.com) → **New → Web Service**
-3. Connect your GitHub repo
-4. Configure:
-   - **Root directory:** `backend`
-   - **Build command:** `pip install -r requirements.txt`
-   - **Start command:** `uvicorn app.main:app --host 0.0.0.0 --port $PORT`
-5. Under **Environment Variables**, add:
-   - `GEMINI_API_KEY` → your key
-   - `ALLOWED_ORIGINS` → `https://YOUR-USERNAME.github.io` (add after step 3)
-6. Click **Deploy** — Render gives you a URL like `https://privacylens-api.onrender.com`
-
----
-
-### Step 3 — Deploy the frontend to GitHub Pages
-
-1. Open `frontend/index.html`
-2. Find this line near the top of the `<script>` section:
-   ```js
-   const BACKEND_URL = 'https://YOUR-APP-NAME.onrender.com';
-   ```
-   Replace with your actual Render URL.
-3. Push to GitHub:
-   ```bash
-   git add .
-   git commit -m "feat: set backend URL"
-   git push
-   ```
-4. Go to repo **Settings → Pages**
-   - Source: `Deploy from a branch`
-   - Branch: `main` | Folder: `/frontend`
-   - Save
-5. Site goes live at `https://YOUR-USERNAME.github.io/privacy-policy-analyzer`
-
----
-
-### Step 4 — Update CORS on Render
-
-Go back to your Render service → **Environment** → update:
-```
-ALLOWED_ORIGINS=https://YOUR-USERNAME.github.io,http://localhost:5500
-```
-Render redeploys automatically.
-
----
-
-## Local Development
-
-### Backend
-
-```bash
-cd backend
-python -m venv venv
-source venv/bin/activate       # Windows: venv\Scripts\activate
-pip install -r requirements.txt
-
-# Copy and fill in your key
-cp .env.example .env
-
-uvicorn app.main:app --reload --port 8000
-# Swagger UI → http://localhost:8000/docs
-```
-
-### Frontend
-
-Point the `BACKEND_URL` in `index.html` to `http://localhost:8000`, then open the file with any
-live-server (VS Code Live Server, `python -m http.server`, etc.).
-
----
-
-## Test Policies (reliable URLs)
-
-| Company | URL |
-|---|---|
-| Google | `https://policies.google.com/privacy` |
-| Apple | `https://www.apple.com/legal/privacy/en-ww/` |
-| GitHub | `https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement` |
-| Wikipedia | `https://foundation.wikimedia.org/wiki/Privacy_policy` |
-
-If a site blocks the backend fetcher, use the **Paste Text** tab.
-
----
-
-## API Reference
-
-### `POST /api/v1/analyze`
-
-**Request:**
 ```json
 {
-  "url": "https://policies.google.com/privacy",
-  "policy_text": null
+  "url": "https://policies.google.com/privacy"
 }
 ```
 
-**Response:**
 ```json
 {
   "url": "https://policies.google.com/privacy",
-  "overall": { "score": 6.4, "label": "Moderate Risk", "color": "amber" },
+  "overall": { "score": 6.4, "label": "Moderate Risk" },
   "executive_summary": "...",
   "total_chunks": 138,
   "total_sections": 21,
@@ -185,13 +138,12 @@ If a site blocks the backend fetcher, use the **Paste Text** tab.
     {
       "risk_category": "Third Party Sharing",
       "risk_score": 8,
-      "summary": "...",
+      "summary": "The policy permits broad sharing with advertising partners...",
       "key_findings": ["..."],
-      "red_flags": ["..."],
-      "positive_indicators": ["..."],
-      "evidence": ["..."],
+      "red_flags": ["We may share information with advertising networks..."],
+      "positive_indicators": ["You may opt out of personalised advertising..."],
       "evidence_chunks": [
-        { "content": "...", "section": "...", "similarity_score": 0.74 }
+        { "section": "Sharing your information", "content": "...", "similarity_score": 0.71 }
       ],
       "score_method": "llm+heuristic"
     }
@@ -199,24 +151,38 @@ If a site blocks the backend fetcher, use the **Paste Text** tab.
 }
 ```
 
+Interactive docs available at `/docs` when running locally.
+
 ---
 
-## Engineering Concepts Demonstrated
+## Running locally
 
-| Concept | Where |
-|---|---|
-| RAG pipeline | `chunking.py` → `analyze.py` |
-| Semantic chunking | `LangChain RecursiveCharacterTextSplitter` |
-| Dense vector retrieval | `FAISS` + `sentence-transformers` |
-| Evidence grounding | LLM prompt contains only retrieved chunks |
-| Deterministic scoring | Keyword heuristics in `llm_service.py` |
-| Structured prompting | JSON-only system prompt, strict schema |
-| Secret management | `GEMINI_API_KEY` env var, never in code |
-| CORS security | Origin whitelist via `ALLOWED_ORIGINS` env var |
-| Modular backend | Separate services: retrieval / chunking / llm |
+```bash
+cd backend
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env          # add your GEMINI_API_KEY
+uvicorn app.main:app --reload --port 8000
+```
+
+Then open `http://localhost:8000/docs` for the Swagger UI, or point `BACKEND_URL` in `frontend/index.html` to `http://localhost:8000` and open the frontend with a local server.
+
+---
+
+## Tech stack
+
+| Layer | Technology | Notes |
+|---|---|---|
+| Frontend | HTML + JS | Single file, no framework, no build step |
+| Backend | FastAPI + Pydantic | Async, typed, auto-documented |
+| Chunking | LangChain `RecursiveCharacterTextSplitter` | Section-aware, configurable overlap |
+| Retrieval | scikit-learn TF-IDF + cosine similarity | Chosen over FAISS to fit free-tier memory |
+| LLM | Gemini 1.5 Flash | JSON-mode prompting, structured output |
+| Parsing | trafilatura + BeautifulSoup | Main-content extraction, clutter removal |
+| Hosting | GitHub Pages + Render | Both free tiers |
 
 ---
 
 ## Disclaimer
 
-Educational portfolio project. Findings are heuristic-based and not legal advice.
+Educational portfolio project. Generated findings are heuristic-based and should not be interpreted as legal or regulatory conclusions.
