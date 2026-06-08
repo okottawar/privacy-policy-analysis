@@ -2,10 +2,11 @@ fastapi==0.115.12
 uvicorn[standard]==0.34.3
 pydantic==2.11.5
 
-# RAG pipeline — no sentence-transformers, no PyTorch
+# RAG pipeline — full FAISS + dense embeddings (HF Spaces has 16GB RAM)
 langchain==0.3.25
 langchain-community==0.3.24
-scikit-learn==1.6.1
+faiss-cpu==1.11.0
+sentence-transformers==4.1.0
 
 # LLM
 google-generativeai==0.8.5

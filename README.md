@@ -4,7 +4,7 @@
 
 Paste any privacy policy URL and get a structured risk report — scored across six categories, grounded in evidence retrieved directly from the document. No summaries from memory. No hallucinated findings.
 
-🔗 **Live demo:** `https://okottawar.github.io/privacy-policy-analyzer`
+🔗 **Live demo:** `https://YOUR-USERNAME.github.io/privacy-policy-analyzer`
 
 ---
 
@@ -44,10 +44,10 @@ Section extraction              heading heuristics
 Hierarchical chunking           LangChain RecursiveCharacterTextSplitter
    │                            800 tokens, 150 token overlap
    ▼
-TF-IDF index                    scikit-learn, bigram features
+FAISS vector store              sentence-transformers/all-MiniLM-L6-v2
    │
    ▼
-Per-category retrieval          cosine similarity, top-5 chunks per query
+Per-category retrieval          FAISS similarity search, top-5 chunks per query
    │
    ▼
 LLM reasoning                   Gemini 1.5 Flash, JSON-only output
@@ -61,11 +61,11 @@ Structured risk report
 
 The scoring is intentionally not left entirely to the LLM. A keyword heuristic layer adjusts the LLM-generated score up or down based on known high-risk phrases ("may share with third parties", "retain indefinitely") and low-risk signals ("right to erasure", "you may withdraw consent"). This makes the scoring more reproducible and less sensitive to LLM phrasing variation.
 
-### Why TF-IDF instead of dense embeddings
+### Retrieval: dense embeddings over TF-IDF
 
-The original design used FAISS with `sentence-transformers/all-MiniLM-L6-v2` for dense vector retrieval. During deployment, this exceeded Render's free tier memory ceiling (512MB) — PyTorch and the transformer weights alone consume ~450MB at idle.
+The retrieval layer uses FAISS with `sentence-transformers/all-MiniLM-L6-v2` to embed chunks into 384-dimensional vectors. At query time, each risk category query is embedded using the same model and the top-5 nearest chunks are retrieved by cosine similarity.
 
-Privacy policy text is keyword-dense legal language. Sparse retrieval with TF-IDF bigrams performs comparably to dense embeddings for this domain, while using ~5MB of memory instead of ~450MB. The architectural pattern — chunk, index, retrieve, reason — is identical either way.
+This runs on Hugging Face Spaces, which provides 16GB RAM — enough headroom for PyTorch and the transformer model (~450MB) alongside the FastAPI app.
 
 ---
 
@@ -73,12 +73,12 @@ Privacy policy text is keyword-dense legal language. Sparse retrieval with TF-ID
 
 ```
 ┌─────────────────────────────┐         ┌──────────────────────────────────┐
-│   Frontend                  │         │   Backend (FastAPI on Render)     │
+│   Frontend                  │         │   Backend (FastAPI on HF Spaces)  │
 │   GitHub Pages              │         │                                   │
 │                             │  POST   │  app/                             │
 │   Pure HTML + JS            │ ──────► │  ├── routers/analyze.py          │
 │   No API key exposed        │         │  ├── services/                    │
-│   TF-IDF chunk explorer     │ ◄────── │  │   ├── retrieval.py            │
+│   TF-IDF chunk explorer*    │ ◄────── │  │   ├── retrieval.py            │
 │                             │  JSON   │  │   ├── chunking.py             │
 └─────────────────────────────┘         │  │   └── llm_service.py         │
                                         │  └── models/schemas.py           │
@@ -87,7 +87,9 @@ Privacy policy text is keyword-dense legal language. Sparse retrieval with TF-ID
                                         └──────────────────────────────────┘
 ```
 
-The API key never touches the frontend. It lives only in Render's environment variables and is loaded at startup. CORS is locked to the GitHub Pages origin.
+The API key never touches the frontend. It lives only in Hugging Face Spaces secrets and is loaded at startup. CORS is locked to the GitHub Pages origin.
+
+*The frontend chunk explorer runs its own lightweight TF-IDF over the evidence chunks returned in the API response — no extra backend call needed.
 
 ---
 
@@ -101,7 +103,8 @@ privacy-policy-analyzer/
 │
 └── backend/
     ├── requirements.txt
-    ├── render.yaml
+    ├── Dockerfile
+    ├── README_HF.md
     ├── .env.example
     └── app/
         ├── main.py             # FastAPI app, CORS middleware
@@ -176,10 +179,10 @@ Then open `http://localhost:8000/docs` for the Swagger UI, or point `BACKEND_URL
 | Frontend | HTML + JS | Single file, no framework, no build step |
 | Backend | FastAPI + Pydantic | Async, typed, auto-documented |
 | Chunking | LangChain `RecursiveCharacterTextSplitter` | Section-aware, configurable overlap |
-| Retrieval | scikit-learn TF-IDF + cosine similarity | Chosen over FAISS to fit free-tier memory |
+| Retrieval | FAISS + sentence-transformers (all-MiniLM-L6-v2) | Dense vector search, hosted on HF Spaces (16GB RAM) |
 | LLM | Gemini 1.5 Flash | JSON-mode prompting, structured output |
 | Parsing | trafilatura + BeautifulSoup | Main-content extraction, clutter removal |
-| Hosting | GitHub Pages + Render | Both free tiers |
+| Hosting | GitHub Pages + Hugging Face Spaces | Both free tiers |
 
 ---
 
