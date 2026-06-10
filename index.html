@@ -336,6 +336,7 @@ function scoreBg(n) {
 
 
 // PIPELINE STEP SIMULATION
+// Keeps the status panel feeling live while the backend works
 const STEPS = ['step-send','step-fetch','step-chunk','step-embed','step-retrieve','step-llm','step-report'];
 const STEP_DELAYS = [0, 2000, 5000, 9000, 13000, 17000, 50000]; // approx timing
 
@@ -403,14 +404,20 @@ async function runAnalysis() {
     const data = await res.json();
     finishStepSimulation();
 
-    // Stash chunks from evidence for the explorer
-    gFindings = data.findings;
-    gChunks = data.findings.flatMap(f =>
-      (f.evidence_chunks || []).map(c => ({ section: c.section, content: c.content }))
-    );
-    gTfidf = buildTFIDF(gChunks);
-
+    // Render results first — never block on TF-IDF build
     renderResults(data);
+
+    // Stash chunks from evidence for the chunk explorer
+    // Wrapped in try/catch so a TF-IDF failure never breaks the report
+    try {
+      gFindings = data.findings;
+      gChunks = data.findings.flatMap(f =>
+        (f.evidence_chunks || []).map(c => ({ section: c.section, content: c.content }))
+      );
+      if (gChunks.length > 0) gTfidf = buildTFIDF(gChunks);
+    } catch (e) {
+      console.warn('Chunk explorer unavailable:', e);
+    }
 
   } catch (err) {
     failStepSimulation();
