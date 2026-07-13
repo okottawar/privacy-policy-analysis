@@ -27,26 +27,23 @@ HEADERS = {
 def fetch_policy(url: str, timeout: int = 15) -> str:
     """
     Fetch a privacy policy from a URL.
-    Tries trafilatura first (better main-content extraction),
-    falls back to BeautifulSoup.
+    Tries trafilatura first, falls back to BeautifulSoup.
     """
     response = requests.get(url, headers=HEADERS, timeout=timeout)
     response.raise_for_status()
     html = response.text
 
-    # Attempt trafilatura extraction (cleaner main-content extraction)
     if HAS_TRAFILATURA:
         extracted = trafilatura.extract(
             html,
             include_tables=True,
             include_links=False,
-            include_formatting=True,
+            include_formatting=True,  # preserve heading markers
             output_format="txt",
         )
         if extracted and len(extracted) > 500:
             return _clean_text(extracted)
 
-    # Fallback: BeautifulSoup
     return _bs4_extract(html)
 
 
@@ -54,12 +51,10 @@ def _bs4_extract(html: str) -> str:
     """BeautifulSoup fallback extractor."""
     soup = BeautifulSoup(html, "html.parser")
 
-    # Remove boilerplate elements
     for tag in soup(["script", "style", "nav", "header", "footer",
                      "aside", "form", "button", "img", "noscript"]):
         tag.decompose()
 
-    # Try to find the main content block
     main = (
         soup.find("main")
         or soup.find("article")
@@ -78,14 +73,12 @@ def _clean_text(text: str) -> str:
     cleaned = []
     for line in lines:
         line = line.strip()
-        # Drop very short or purely symbolic lines
         if len(line) < 3:
             continue
         if re.match(r"^[^a-zA-Z0-9]*$", line):
             continue
         cleaned.append(line)
 
-    # Collapse 3+ consecutive blank lines into 2
     result = "\n".join(cleaned)
     result = re.sub(r"\n{3,}", "\n\n", result)
     return result.strip()
@@ -94,27 +87,79 @@ def _clean_text(text: str) -> str:
 def extract_sections(text: str) -> list[dict]:
     """
     Heuristically split the policy into named sections.
+    Uses multiple heading patterns to handle different policy formats.
     Returns list of {"section": str, "content": str}
     """
-    # Patterns that commonly indicate section headings in privacy policies
-    heading_pattern = re.compile(
-        r"^(?:\d+[\.\)]\s+)?([A-Z][A-Za-z\s\-&]{3,60})$",
-        re.MULTILINE
-    )
-
-    matches = list(heading_pattern.finditer(text))
+    lines = text.splitlines()
     sections = []
+    current_heading = "Introduction"
+    buffer = []
 
-    if not matches:
-        # No headings found — treat entire doc as one section
-        return [{"section": "Privacy Policy", "content": text}]
+    for line in lines:
+        stripped = line.strip()
+        if _is_heading(stripped):
+            # Save previous section
+            content = "\n".join(buffer).strip()
+            if content:
+                sections.append({"section": current_heading, "content": content})
+            current_heading = stripped
+            buffer = []
+        else:
+            buffer.append(line)
 
-    for i, match in enumerate(matches):
-        heading = match.group(1).strip()
-        start = match.end()
-        end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
-        content = text[start:end].strip()
-        if content:
-            sections.append({"section": heading, "content": content})
+    # Save final section
+    content = "\n".join(buffer).strip()
+    if content:
+        sections.append({"section": current_heading, "content": content})
 
-    return sections
+    # If only 1 section detected, split by paragraph blocks instead
+    # This handles policies where trafilatura strips all heading markers
+    if len(sections) <= 1 and text:
+        return _split_by_paragraphs(text)
+
+    return [s for s in sections if len(s["content"]) > 50]
+
+
+def _is_heading(line: str) -> bool:
+    """
+    Returns True if a line looks like a section heading.
+    Handles multiple common privacy policy heading formats.
+    """
+    if not line or len(line) > 100:
+        return False
+
+    patterns = [
+        # "1. Data Collection" or "1) Data Collection"
+        r"^\d+[\.\)]\s+[A-Z][A-Za-z\s\-&]{2,60}$",
+        # All-caps heading: "DATA COLLECTION"
+        r"^[A-Z][A-Z\s\-&]{4,60}$",
+        # Title case short line: "Data Collection" (max 6 words)
+        r"^([A-Z][a-z]+\s){1,5}[A-Z][a-z]+$",
+        # Heading with colon: "Data Collection:"
+        r"^[A-Z][A-Za-z\s\-&]{3,60}:$",
+        # Markdown-style: "## Data Collection"
+        r"^#{1,3}\s+.{3,60}$",
+    ]
+
+    return any(re.match(p, line) for p in patterns)
+
+
+def _split_by_paragraphs(text: str, min_length: int = 200) -> list[dict]:
+    """
+    Fallback: split text into paragraph blocks when no headings are found.
+    Labels each block sequentially.
+    """
+    paragraphs = re.split(r"\n\n+", text)
+    sections = []
+    block_num = 1
+
+    for para in paragraphs:
+        para = para.strip()
+        if len(para) >= min_length:
+            sections.append({
+                "section": f"Section {block_num}",
+                "content": para,
+            })
+            block_num += 1
+
+    return sections if sections else [{"section": "Privacy Policy", "content": text}]
