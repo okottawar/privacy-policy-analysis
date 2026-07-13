@@ -4,7 +4,7 @@
 
 Paste any privacy policy URL and get a structured risk report — scored across six categories, grounded in evidence retrieved directly from the document. No summaries from memory. No hallucinated findings.
 
-🔗 **Live demo:** `https://YOUR-USERNAME.github.io/privacy-policy-analyzer`
+🔗 **Live demo:** `https://okottawar.github.io/privacy-policy-analyzer`
 
 ---
 
