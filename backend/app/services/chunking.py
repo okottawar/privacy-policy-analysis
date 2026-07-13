@@ -80,25 +80,24 @@ def retrieve_relevant_chunks(
     vector_store: FAISS,
     query: str,
     k: int = 5,
-    score_threshold: float = 0.25,
 ) -> list[dict]:
     """
     Retrieve top-k semantically relevant chunks for a query.
-    Applies a similarity score threshold to filter low-quality matches.
+    Always returns up to k results — no threshold filtering.
+    FAISS L2 distance is converted to a 0-1 similarity score for display only.
     """
     results_with_scores = vector_store.similarity_search_with_score(query, k=k)
 
     retrieved = []
     for doc, score in results_with_scores:
-        # FAISS L2 distance → 0–1 similarity
+        # Convert L2 distance to similarity score (display only — not used for filtering)
         similarity = float(1 / (1 + score))
-        if similarity >= score_threshold:
-            retrieved.append({
-                "content": doc.page_content,
-                "section": doc.metadata.get("section", "Unknown"),
-                "chunk_id": doc.metadata.get("chunk_id", ""),
-                "similarity_score": round(similarity, 4),
-            })
+        retrieved.append({
+            "content": doc.page_content,
+            "section": doc.metadata.get("section", "Unknown"),
+            "chunk_id": doc.metadata.get("chunk_id", ""),
+            "similarity_score": round(similarity, 4),
+        })
 
     retrieved.sort(key=lambda x: x["similarity_score"], reverse=True)
     return retrieved
